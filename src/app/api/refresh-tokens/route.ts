@@ -89,8 +89,8 @@ export async function GET(): Promise<Response> {
 
     <script>
         function openProcoreLogin() {
-            const clientId = process.env.PROCORE_CLIENT_ID || "";
-            const url = `https://login.procore.com/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback`;
+            const clientId = '${process.env.PROCORE_CLIENT_ID || ""}';
+            const url = 'https://login.procore.com/oauth/authorize?response_type=code&client_id=' + clientId + '&redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback';
             window.open(url, '_blank');
         }
 
