@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { RfiTable } from '@/components/RfiTable';
 import { type RfiRow } from '@/types/rfi';
 import { getLastUpdatedTimestamp } from '@/lib/date';
@@ -14,10 +14,16 @@ export default function Home() {
 
   // Check token status
   const checkTokenStatus = async () => {
+    // Only check token status if we have a refresh key
+    if (!process.env.NEXT_PUBLIC_REFRESH_KEY) {
+      setTokenStatus('unknown');
+      return;
+    }
+    
     try {
       const response = await fetch('/api/refresh', {
         method: 'POST',
-        headers: { 'x-refresh-key': process.env.NEXT_PUBLIC_REFRESH_KEY || '' }
+        headers: { 'x-refresh-key': process.env.NEXT_PUBLIC_REFRESH_KEY }
       });
       const result = await response.json();
       
@@ -33,7 +39,8 @@ export default function Home() {
           setTokenStatus('unknown');
         }
       }
-    } catch {
+    } catch (error) {
+      console.log('Token check failed:', error);
       setTokenStatus('unknown');
     }
   };
@@ -65,8 +72,9 @@ export default function Home() {
       loadTimestampFromFile();
     }
     
-    // Check token status on load
-    checkTokenStatus();
+    // Check token status on load (completely non-blocking)
+    // Temporarily disabled to fix loading issue
+    // setTimeout(checkTokenStatus, 1000);
   }, []);
 
   const fetchData = async (cleanupNotes = false) => {
@@ -87,10 +95,11 @@ export default function Home() {
       }
       
       const result = await response.json();
-      setData(result.rows);
+      
+      setData(result.rows || []);
       // Only update lastUpdated on initial load, not on subsequent fetches
       if (!lastRefreshTime) {
-        setLastUpdated(getLastUpdatedTimestamp(result.rows));
+        setLastUpdated(getLastUpdatedTimestamp(result.rows || []));
       }
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -101,40 +110,51 @@ export default function Home() {
     }
   };
 
-  // Function specifically for the refresh button (updates timestamp)
-  const fetchDataWithTimestamp = async () => {
-    await fetchData(true); // Include cleanup
-    
-    // After refresh, try to get the timestamp from the file (most accurate)
-    try {
-      const timestampResponse = await fetch('/api/last-refresh', {
-        cache: 'no-store',
-      });
-      if (timestampResponse.ok) {
-        const timestampData = await timestampResponse.json();
-        setLastRefreshTime(timestampData.lastRefresh);
-        localStorage.setItem('rfi-last-refresh-time', timestampData.lastRefresh);
-        return;
-      }
-    } catch (error) {
-      console.log('Could not load timestamp from file after refresh');
-    }
-    
-    // Fallback to current time if file timestamp is not available
-    const newRefreshTime = new Date().toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-    setLastRefreshTime(newRefreshTime);
-    localStorage.setItem('rfi-last-refresh-time', newRefreshTime);
-  };
 
-  // Separate function for refreshing data without updating timestamp
-  const refreshDataOnly = async () => {
+  // Single source of truth for refreshing RFIs - used by RfiTable
+  const refreshRfis = useCallback(async () => {
+    try {
+      console.log('refreshRfis: Starting refresh...');
+      
+      // 1) Fetch latest RFI data
+      const response = await fetch('/api/rfis', {
+        cache: 'no-store',
+        headers: { 'x-cleanup-notes': 'true' }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Fetch RFIs failed: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('refreshRfis: Fetched data, rows count:', data.rows?.length || 0);
+      setData(data.rows || []);
+      
+      // 2) Update timestamp with current time (when refresh actually happened)
+      const newRefreshTime = new Date().toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+      console.log('refreshRfis: Setting new refresh time:', newRefreshTime);
+      setLastRefreshTime(newRefreshTime);
+      localStorage.setItem('rfi-last-refresh-time', newRefreshTime);
+      
+      // 3) Update lastUpdated timestamp to show when refresh happened (not data timestamp)
+      setLastUpdated(newRefreshTime);
+      console.log('refreshRfis: Updated lastUpdated to:', newRefreshTime);
+    } catch (error) {
+      console.error('Error refreshing RFIs:', error);
+      setData([]);
+      setLastUpdated('Error loading data');
+    }
+  }, []);
+
+  // For note updates without timestamp change
+  const refreshDataOnly = useCallback(async () => {
     try {
       const response = await fetch('/api/rfis', {
         cache: 'no-store',
@@ -145,16 +165,19 @@ export default function Home() {
       }
       
       const result = await response.json();
-      setData(result.rows);
-      // Don't update lastUpdated timestamp for note-only refreshes
+      setData(result.rows || []);
     } catch (error) {
       console.error('Error fetching data:', error);
+      setData([]);
     }
-  };
+  }, []);
+
+
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   if (loading) {
     return (
@@ -170,65 +193,25 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--domaco-light-gray)]">
-      {/* Header with company branding */}
-      <div className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="w-[90%] mx-auto px-4 py-6">
-          <div className="flex items-center gap-8">
-            <img 
-              src="/images/Domaco-Encocorp-Projects-1.png" 
-              alt="Domaco-Encocorp" 
-              className="h-20 w-auto"
-            />
-            <div className="flex flex-col justify-center">
-              <h1 className="text-4xl font-bold tracking-tight text-[var(--domaco-gray)] mb-1">RFI Dashboard</h1>
-              <p className="text-[var(--domaco-gray)] text-lg font-medium">
-                Request for Information Management System
-              </p>
-            </div>
-          </div>
-        </div>
+    <div className="container mx-auto py-8">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-gray-900">RFI Dashboard</h1>
       </div>
 
-      {/* Token Status Alert */}
       {tokenStatus === 'expired' && (
-        <div className="bg-red-50 border-l-4 border-red-400 p-4 mx-4 my-4">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <span className="text-red-400">⚠️</span>
-            </div>
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-red-800">
-                Authentication Token Expired
-              </h3>
-              <div className="mt-2 text-sm text-red-700">
-                <p>Your Procore tokens have expired (this happens overnight for security).</p>
-                <p className="mt-1">
-                  <button 
-                    onClick={() => window.open('/api/refresh-tokens', '_blank')}
-                    className="font-medium underline hover:text-red-600"
-                  >
-                    Click here to refresh tokens automatically
-                  </button>
-                </p>
-              </div>
-            </div>
-          </div>
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
+          <p className="text-red-800">
+            ⚠️ Procore tokens have expired. Please update the tokens to enable data refresh.
+          </p>
         </div>
       )}
 
-      {/* Main content */}
-      <div className="w-[90%] mx-auto py-8 px-4">
-        <div className="space-y-6">
-        
-          <RfiTable 
-            data={data} 
-            onRefresh={fetchDataWithTimestamp}
-            onDataRefresh={refreshDataOnly}
-            lastUpdated={lastRefreshTime || lastUpdated}
-          />
-        </div>
-      </div>
+      <RfiTable 
+        data={data} 
+        onRefresh={refreshRfis}
+        onDataRefresh={refreshDataOnly}
+        lastUpdated={lastUpdated}
+      />
     </div>
   );
 }

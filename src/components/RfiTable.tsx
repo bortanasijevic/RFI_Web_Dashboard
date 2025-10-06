@@ -27,16 +27,21 @@ import { type RfiRow } from '@/types/rfi';
 import { formatDate, getDaysLateStyling } from '@/lib/date';
 import { NoteCell } from '@/components/NoteCell';
 
-interface RfiTableProps {
+export interface RfiTableProps {
   data: RfiRow[];
-  onRefresh: (cleanupNotes?: boolean) => void;
-  onDataRefresh?: () => void; // For note updates without timestamp change
+  onRefresh: () => Promise<void>; // Required contract - must return Promise<void>
+  onDataRefresh?: () => Promise<void>; // For note updates without timestamp change
   lastUpdated: string;
 }
 
 const columnHelper = createColumnHelper<RfiRow>();
 
-export function RfiTable({ data, onRefresh, onDataRefresh, lastUpdated }: RfiTableProps) {
+export function RfiTable({ 
+  data, 
+  onRefresh = async () => {}, // Safety net - default no-op
+  onDataRefresh, 
+  lastUpdated 
+}: RfiTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -85,7 +90,13 @@ export function RfiTable({ data, onRefresh, onDataRefresh, lastUpdated }: RfiTab
       console.log('Exporter completed successfully');
       
       // 2) Re-fetch /api/rfis with cleanup and update timestamp
-      await onRefresh();
+      if (typeof onRefresh === 'function') {
+        console.log('Calling onRefresh to update data and timestamp...');
+        await onRefresh();
+        console.log('onRefresh completed successfully');
+      } else {
+        console.warn('RfiTable: onRefresh missing; skipping refresh.');
+      }
     } catch (error) {
       console.error('Refresh error:', error);
       alert('Failed to refresh data. Please try again.');
@@ -387,3 +398,5 @@ export function RfiTable({ data, onRefresh, onDataRefresh, lastUpdated }: RfiTab
     </div>
   );
 }
+
+export default RfiTable;
