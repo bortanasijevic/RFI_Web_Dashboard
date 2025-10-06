@@ -75,72 +75,66 @@ export async function POST(req: Request): Promise<Response> {
           out += "\n--- Starting background deployment to shared demo ---\n";
           out += "✅ Local refresh complete! Starting git commit and Vercel deployment...\n";
           
-          // Start background deployment (don't wait for it)
+          // Start background sync to GitHub (don't wait for it). Vercel will auto-deploy on push.
           setImmediate(() => {
             const { spawn } = require("node:child_process");
             
             console.log("🚀 Starting background deployment...");
             
-            // Run git add (include notes file)
-            const gitAdd = spawn("git", ["add", "data/rfis_final.json", "data/last_refresh.json", "data/notes.json"], {
+            // Ensure we're up-to-date to avoid push rejects
+            const gitPull = spawn("git", ["pull", "--rebase", "origin", "main"], {
               cwd: process.cwd(),
               stdio: "pipe"
             });
             
-            gitAdd.on("close", (addCode) => {
-              if (addCode === 0) {
-                console.log("✅ Git add successful");
+            gitPull.on("close", (pullCode: number) => {
+              if (pullCode === 0) {
+                console.log("✅ Git pull --rebase successful");
+              } else {
+                console.log("⚠️ Git pull --rebase failed (continuing anyway)");
+              }
+
+              // Run git add (include notes file)
+              const gitAdd = spawn("git", ["add", "data/rfis_final.json", "data/last_refresh.json", "data/notes.json"], {
+                cwd: process.cwd(),
+                stdio: "pipe"
+              });
+              
+              gitAdd.on("close", (addCode: number) => {
+                if (addCode === 0) {
+                  console.log("✅ Git add successful");
                 
-                // Run git commit
-                const gitCommit = spawn("git", ["commit", "-m", "Auto-update demo data from refresh button"], {
-                  cwd: process.cwd(),
-                  stdio: "pipe"
-                });
-                
-                gitCommit.on("close", (commitCode) => {
-                  if (commitCode === 0) {
-                    console.log("✅ Git commit successful");
-                    
-                    // Run git push
+                  // Run git commit
+                  const gitCommit = spawn("git", ["commit", "-m", "Auto-update demo data from refresh button"], {
+                    cwd: process.cwd(),
+                    stdio: "pipe"
+                  });
+                  
+                  gitCommit.on("close", (commitCode: number) => {
+                    if (commitCode === 0) {
+                      console.log("✅ Git commit successful");
+                    } else {
+                      console.log("ℹ️ Git commit skipped (no changes)");
+                    }
+
+                    // Push regardless (commit may be skipped)
                     const gitPush = spawn("git", ["push", "origin", "main"], {
                       cwd: process.cwd(),
                       stdio: "pipe"
                     });
-                    
-                    gitPush.on("close", (pushCode) => {
+
+                    gitPush.on("close", (pushCode: number) => {
                       if (pushCode === 0) {
-                        console.log("✅ Git push successful");
-                        
-                        // Run vercel deploy
-                        const vercelDeploy = spawn("vercel", ["--prod", "--yes"], {
-                          cwd: process.cwd(),
-                          stdio: "pipe"
-                        });
-                        
-                        vercelDeploy.on("close", (deployCode) => {
-                          if (deployCode === 0) {
-                            console.log("🎉 Shared demo updated successfully!");
-                          } else {
-                            console.log("⚠️ Vercel deployment failed - this is normal if Vercel token is expired");
-                            console.log("📝 Data has been committed to GitHub. Vercel should auto-deploy in 2-3 minutes.");
-                          }
-                        });
-                        
-                        vercelDeploy.on("error", (error) => {
-                          console.log("⚠️ Vercel deployment error:", error.message);
-                          console.log("📝 Data has been committed to GitHub. Vercel should auto-deploy in 2-3 minutes.");
-                        });
+                        console.log("✅ Git push successful (Vercel will auto-deploy shortly)");
                       } else {
-                        console.log("⚠️ Git push failed");
+                        console.log("⚠️ Git push failed (repo may be out-of-sync or auth missing)");
                       }
                     });
-                  } else {
-                    console.log("ℹ️ Git commit skipped (no changes)");
-                  }
-                });
-              } else {
-                console.log("⚠️ Git add failed");
-              }
+                  });
+                } else {
+                  console.log("⚠️ Git add failed");
+                }
+              });
             });
           });
           
